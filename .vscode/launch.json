@@ -1,0 +1,18 @@
+{
+      // Use IntelliSense to learn about possible attributes.
+      // Hover to view descriptions of existing attributes.
+      // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+      "version": "0.2.0",
+      "configurations": [
+            {
+                  "name": "UART_test",
+                  "type": "debugpy",
+                  "request": "launch",
+                  "program": "/home/nvidia/WBR_code/UART_pack.py",
+                  "console": "integratedTerminal",
+                  "args": "${command:pickArgs}",
+                  "cwd": "/home/nvidia/WBR_code",
+                  "justMyCode": false
+            }
+      ]
+}
