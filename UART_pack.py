@@ -165,8 +165,8 @@ class WBR_Cmd_Send:
   self.Left_Knee_Torque_Des=0.0
   self.Left_Hip_Torque_Des=0.0
   self.Right_Wheel_Torque_Des=0.0
-  self.Left_Knee_Torque_Des=0.0
-  self.Left_Hip_Torque_Des=0.0
+  self.Right_Knee_Torque_Des=0.0
+  self.Right_Hip_Torque_Des=0.0
  ##命令更新函数：cmd_update()
  #torque_cmd:转矩命令,为6个关节期望力矩按顺序组成的数组[左轮；左膝；左髋；右轮；右膝；右髋]
  def cmd_update(self,torque_cmd:list):
@@ -179,22 +179,22 @@ class WBR_Cmd_Send:
   self.Left_Knee_Torque_Des=torque_cmd[1]
   self.Left_Hip_Torque_Des=torque_cmd[2]
   self.Right_Wheel_Torque_Des=torque_cmd[3]
-  self.Left_Knee_Torque_Des=torque_cmd[4]
-  self.Left_Hip_Torque_Des=torque_cmd[5]
+  self.Right_Knee_Torque_Des=torque_cmd[4]
+  self.Right_Hip_Torque_Des=torque_cmd[5]
  ##命令发送函数：cmd_send将转矩命令转化为约定的帧格式并发出
  def cmd_send(self):
   #帧格式：4+24+4
-  head_frame=b'11223344'
+  head_frame=bytes.fromhex('11223344')
   Left_Wheel_Torque_Des_b=struct.pack('f',self.Left_Wheel_Torque_Des)
   Left_Knee_Torque_Des_b=struct.pack('f',self.Left_Knee_Torque_Des)
   Left_Hip_Torque_Des_b=struct.pack('f',self.Left_Hip_Torque_Des)
   Right_Wheel_Torque_Des_b=struct.pack('f',self.Left_Wheel_Torque_Des)
   Right_Knee_Torque_Des_b=struct.pack('f',self.Left_Knee_Torque_Des)
   Right_Hip_Torque_Des_b=struct.pack('f',self.Left_Hip_Torque_Des)
-  tail_frame=b'55667788'
+  tail_frame=bytes.fromhex('55667788')
   cmd_byte=head_frame+Left_Wheel_Torque_Des_b+Left_Knee_Torque_Des_b+Left_Hip_Torque_Des_b\
            +Right_Wheel_Torque_Des_b+Right_Knee_Torque_Des_b+Right_Hip_Torque_Des_b+tail_frame
-  return cmd_byte                  #    
+  return cmd_byte                  #字符型命令  
 ###class 4:调用读取和发送的类###
 class SerialThread(thr.Thread):
   def __init__(self, 
@@ -221,6 +221,7 @@ class SerialThread(thr.Thread):
     self.ser = ser    
     self.uart =uart
     self.send_state=send_state
+    self.send_state=send_state
     self.recv_state=recv_state
     self.send_queue = send_queue  
     self.recv_queue = recv_queue 
@@ -245,27 +246,29 @@ class SerialThread(thr.Thread):
           with self.send_lock: 
           # 如果队列不为空
             if not self.send_queue.empty():                #队列是否为空
-              data = self.send_queue.get(1)   
+              data = self.send_queue.get()   
               data_total.append(data)                      #结合数据
               self.ser.write(data_total[0])                #发送字节数据
               print("------1 frame sent successfully.------")
               print(data_total[0],end='\n')
             else:print("send队列空,请检查是否读入！\n",end='')  
-          time.sleep(0.05)
+          time.sleep(0.002)
 
   def receive_data(self):
       while True:
-          msg_length=2*self.uart.single_frame_len          #一次接受两帧
+          msg_length=1*self.uart.single_frame_len          #一次接受两帧
           frame_num=0                                      #已切片帧数
           lefted_bytes=b''                                 #不完整切片
           data_total=b''
           # 接受和解释数据类型                
+          if not self.ser.is_open:
+             self.ser.open()
           if self.ser.in_waiting >0:                       #判断串口有无数据
             data =lefted_bytes +self.ser.read(msg_length)  #get到数据
             self.recv_queue.put(data)                      #存入队列
             with self.recv_lock:                           #取数据时线程上锁，防止别的线程捣乱
               if not self.recv_queue.empty():
-                  data = self.recv_queue.get(4)            #从队列中取出，准备切片
+                  data = self.recv_queue.get()            #从队列中取出，准备切片
                   data_total,frame_num,lefted_bytes=self.uart.parce_multi_frame(data,len(data),
                   self.uart.single_frame_len,self.uart.head_frame_len,self.uart.tail_frame_len)  #切片多帧数据 
               else:print("recv队列空,请检查是否读入\n",end='')
@@ -273,73 +276,9 @@ class SerialThread(thr.Thread):
               for i in range(frame_num):
                 self.recv_state.state_update(data_total[i],self.recv_state.state_show)
           else:print("串口数据为空\n",end='')
-          time.sleep(0.05)                                 #防止线程一直占用cpu
+          time.sleep(0.001)                                 #防止线程一直占用cpu
 
 if __name__=='__main__':
-   '''''
-head_frame='5500'
-tail_frame='0055'
-x=1.5
-y=4.6
-z=7.5
-u=-3
-v=-4
-w=6.8563
-msg_x=struct.pack('<f',x) #小端字节序压缩 float  to  byte
-msg_y=struct.pack('<f',y)
-msg_z=struct.pack('<f',z)
-msg_u=struct.pack('<f',u)
-msg_v=struct.pack('<f',v)
-msg_w=struct.pack('<f',w)
-msg_head=bytes.fromhex(head_frame)
-msg_tail=bytes.fromhex(tail_frame)
-#msg=msg_head+msg_x+msg_y+msg_z+msg_tail+msg_head+msg_u+msg_v+msg_w+msg_tail+msg_head#2帧完整信息
-#构造一个被截断的数据信息
-jd1=1.2458
-jd2=2.5905
-jd3=-103.6
-msg_jd=msg_head+struct.pack('<f',jd1)+struct.pack('<f',jd2)+struct.pack('<f',jd3)+msg_tail
-msg_jd_part1=msg_jd[:5]
-msg_jd_part2=msg_jd[5:] #随便截为两个部分,5可以改为小于len(msg_jd)的任何数
-msg1=msg_head+msg_x+msg_y+msg_z+msg_tail+msg_head+msg_u+msg_v+msg_w+msg_tail+msg_head+msg_jd_part1#2帧完整信息+被截断信息
-msg2=msg_jd_part2
-
-print(msg1)
-lefted_bytes=b''
-uart= UART()
-data_total=[]
-
-
-msg1=lefted_bytes+msg1
-data,data_num,lefted_bytes=uart.parce_multi_frame(msg1,len(msg1),uart.single_frame_len,len(msg_head),len(msg_tail))
-print(data)
-msg2=lefted_bytes+msg2
-data,data_num,lefted_bytes=uart.parce_multi_frame(msg2,len(msg2),uart.single_frame_len,len(msg_head),len(msg_tail))
-print(data)
- '''''
-       #以字节方式接受串口信息
-  #def UART_receive(self,serial_port:serial.Serial): 
-      # activate UART by "sudo chmod 777 /dev/ttyTHS1"
-      #serial_port:定义的串口
-'''
-  import serial
-  例子：
-  serial_port = serial.Serial(
-  port="/dev/ttyTHS1",
-  baudrate=115200,
-  bytesize=serial.EIGHTBITS,
-  parity=serial.PARITY_NONE,
-  timeout=20.0              #超时30秒
-  )
-'''
-serial_port = serial.Serial(
-port="/dev/ttyTHS0",
-baudrate=460800,
-bytesize=serial.EIGHTBITS,
-parity=serial.PARITY_NONE,
-stopbits=1,
-timeout=20.0              #超时20秒
-)
 # Wait a second to let the port initialize
 # time.sleep(0.5)
 #   # Send a simple header
@@ -363,25 +302,40 @@ timeout=20.0              #超时20秒
 #     data_total,frame_num,lefted_bytes=uart.parce_multi_frame(data,len(data),uart.single_frame_len,uart.head_frame_len,uart.tail_frame_len)   
 #     for i in range(frame_num):
 #       obs.state_update(data_total[i],obs.state_show)
-Torque_Des=[3.0,2.0,1.0,0.0,0.0,0.0]#期望力矩；
-uart1=UART_R()
-send_state1=WBR_Cmd_Send()
-send_queue1=queue.Queue()
-send_lock1=thr.Lock()
-recv_state1= WBR_State_Recv()
-recv_queue1=queue.Queue()
-recv_lock1=thr.Lock()
+#以字节方式接受串口信息
+#def UART_receive(self,serial_port:serial.Serial): 
+# activate UART by "sudo chmod 777 /dev/ttyTHS1"
+# #serial_port:定义的串口
+
+  serial_port = serial.Serial(
+  port="/dev/ttyTHS0",
+  baudrate=460800,
+  bytesize=serial.EIGHTBITS,
+  parity=serial.PARITY_NONE,
+  stopbits=1,
+  timeout=20.0              #超时20秒
+  )
+  Torque_Des=[3.0,2.0,1.0,0.0,0.0,0.0]#期望力矩；
+  uart1=UART_R()
+  send_state1=WBR_Cmd_Send()
+  send_queue1=queue.Queue(10)
+  send_lock1=thr.Lock()
+  recv_state1= WBR_State_Recv()
+  recv_queue1=queue.Queue(10)
+  recv_lock1=thr.Lock()
 
 
-send_thread =SerialThread(mode='send', ser=serial_port,send_state=send_state1,
-                                       send_queue=send_queue1,send_lock=send_lock1,send_data=Torque_Des)
-recv_thread = SerialThread(mode='recv', ser=serial_port,uart=uart1,recv_state=recv_state1,
-                                       recv_queue=recv_queue1,recv_lock=recv_lock1)
-recv_thread.start()
+  send_thread =SerialThread(mode='send', ser=serial_port,send_state=send_state1,
+                                         send_queue=send_queue1,send_lock=send_lock1,send_data=Torque_Des)
+  recv_thread =SerialThread(mode='recv', ser=serial_port,uart=uart1,recv_state=recv_state1,
+                                        recv_queue=recv_queue1,recv_lock=recv_lock1)
+  send_thread.start()
+  recv_thread.start()
 
-send_thread.run()
-recv_thread.run()
+  
+  send_thread.run()
+  recv_thread.run()
 
-send_thread.join()
-recv_thread.join()
+  send_thread.join()
+  recv_thread.join()
 
