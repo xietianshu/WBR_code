@@ -159,7 +159,7 @@ class WBR_State_Recv:
 
 ###class 3:发送数据赋值并转化字符形式###
 class WBR_Cmd_Send:
- def __init__(self,num=6):
+ def __init__(self,num:int=6):
   self.num=num
   self.Left_Wheel_Torque_Des=0.0
   self.Left_Knee_Torque_Des=0.0
@@ -203,7 +203,9 @@ class SerialThread(thr.Thread):
               uart:UART_R=None,
               send_state:WBR_Cmd_Send=None,recv_state:WBR_State_Recv=None,
               send_queue:queue.Queue=None,recv_queue:queue.Queue=None, 
-              send_lock:thr.Lock=None, recv_lock:thr.Lock=None):
+              send_lock:thr.Lock=None, recv_lock:thr.Lock=None,
+              send_data:list= None
+              ):
     super().__init__()
     #1.mode:模式——接受"recv"/发送"send"
     #2.ser:serial库定义的串口，Serial对象
@@ -214,6 +216,7 @@ class SerialThread(thr.Thread):
     #7.rcev_quque:接收队列,Queue对象
     #8.send_lock:发送安全锁，Lock对象
     #9.recv_lock:接受安全锁，Lock对象
+    #10.Torque_Des:准备采取的动作数据1x6数组
     self.mode = mode  
     self.ser = ser    
     self.uart =uart
@@ -223,28 +226,32 @@ class SerialThread(thr.Thread):
     self.recv_queue = recv_queue 
     self.send_lock = send_lock  
     self.recv_lock = recv_lock  
-
+    self.Torque_Des= send_data                                       
   def run(self):
       if self.mode == 'send':
+          self.Torque_Curr=np.zeros(self.send_state.num,dtype=np.float32) #要发送的力矩记录,初始化力矩
           self.send_data()
       elif self.mode == 'recv':
           self.receive_data()
 
   def send_data(self):
         while True:
-          # ��ȡҪ���͵�����
-          message = input("������Ҫ���͵����ݣ�")  # �û�����Ҫ���͵�����
-          self.send_queue.put(message)  # �����͵����ݷ������
-          print(f"���ݷ��뷢�Ͷ���: {message}")
-
-          # �ӷ��Ͷ�����ȡ���ݲ�����
-          while not self.send_queue.empty():
-              data = self.send_queue.get()  # �Ӷ����л�ȡ�����͵�����
-              
-              # ��ȡ������������
-              with self.send_lock:  # ��ȡ��������ȷ�����Ͳ�������
-                  self.ser.write(data.encode())  # ��������
-                  print(f"�ѷ���: {data}")
+          data_total=[]                                    #空列表
+          self.Torque_Curr=self.Torque_Des                 #更新力矩的值
+          #更新Action
+          self.send_state.cmd_update(self.Torque_Curr)
+          msg=self.send_state.cmd_send()                    
+          self.send_queue.put(msg)                         #放入队列                                           
+          with self.send_lock: 
+          # 如果队列不为空
+            if not self.send_queue.empty():                #队列是否为空
+              data = self.send_queue.get(1)   
+              data_total.append(data)                      #结合数据
+              self.ser.write(data_total[0])                #发送字节数据
+              print("------1 frame sent successfully.------")
+              print(data_total[0],end='\n')
+            else:print("send队列空,请检查是否读入！\n",end='')  
+          time.sleep(0.05)
 
   def receive_data(self):
       while True:
@@ -261,12 +268,12 @@ class SerialThread(thr.Thread):
                   data = self.recv_queue.get(4)            #从队列中取出，准备切片
                   data_total,frame_num,lefted_bytes=self.uart.parce_multi_frame(data,len(data),
                   self.uart.single_frame_len,self.uart.head_frame_len,self.uart.tail_frame_len)  #切片多帧数据 
-              else:print("recv队列空,请检查是否读入")
+              else:print("recv队列空,请检查是否读入\n",end='')
               #接受电机和IMU数据，调用回调函数进行外部计算(这里是先进行打印)                                              
               for i in range(frame_num):
                 self.recv_state.state_update(data_total[i],self.recv_state.state_show)
-          else:print("串口数据为空")
-          time.sleep(0.01)                                 #防止线程一直占用cpu
+          else:print("串口数据为空\n",end='')
+          time.sleep(0.05)                                 #防止线程一直占用cpu
 
 if __name__=='__main__':
    '''''
@@ -356,14 +363,25 @@ timeout=20.0              #超时20秒
 #     data_total,frame_num,lefted_bytes=uart.parce_multi_frame(data,len(data),uart.single_frame_len,uart.head_frame_len,uart.tail_frame_len)   
 #     for i in range(frame_num):
 #       obs.state_update(data_total[i],obs.state_show)
+Torque_Des=[3.0,2.0,1.0,0.0,0.0,0.0]#期望力矩；
 uart1=UART_R()
+send_state1=WBR_Cmd_Send()
+send_queue1=queue.Queue()
+send_lock1=thr.Lock()
 recv_state1= WBR_State_Recv()
 recv_queue1=queue.Queue()
 recv_lock1=thr.Lock()
 
-recv_thread = SerialThread(mode='recv', ser=serial_port,uart=uart1,recv_state=recv_state1,recv_queue=recv_queue1,recv_lock=recv_lock1)
+
+send_thread =SerialThread(mode='send', ser=serial_port,send_state=send_state1,
+                                       send_queue=send_queue1,send_lock=send_lock1,send_data=Torque_Des)
+recv_thread = SerialThread(mode='recv', ser=serial_port,uart=uart1,recv_state=recv_state1,
+                                       recv_queue=recv_queue1,recv_lock=recv_lock1)
 recv_thread.start()
+
+send_thread.run()
 recv_thread.run()
 
+send_thread.join()
 recv_thread.join()
 
