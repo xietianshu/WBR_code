@@ -109,6 +109,7 @@ class WBR_State_Recv:
     self.Right_Knee_position=0.0
     self.Right_Hip_torque=0.0
     self.Right_Hip_position=0.0
+##状态更新函数state_update,回调callback
  def state_update(self,arr:list,callback):
     #输入必须为指定长度列表&&参数均为float类型
     #回调函数callback()
@@ -137,6 +138,7 @@ class WBR_State_Recv:
     self.Right_Hip_torque=arr[14]
     self.Right_Hip_position=arr[15]
     callback()
+##打印状态函数state_show
  def state_show(self):
     print( 'pitch_angle=', self.pitch_angle,
     'pitch_speed=',self.pitch_speed,
@@ -156,7 +158,7 @@ class WBR_State_Recv:
     'Right_Hip_position=',self.Right_Hip_position,'\n')
 
 ###class 3:发送数据赋值并转化字符形式###
-class WBR_State_Send:
+class WBR_Cmd_Send:
  def __init__(self,num=6):
   self.num=num
   self.Left_Wheel_Torque_Des=0.0
@@ -165,22 +167,41 @@ class WBR_State_Send:
   self.Right_Wheel_Torque_Des=0.0
   self.Left_Knee_Torque_Des=0.0
   self.Left_Hip_Torque_Des=0.0
- def state_update(self,arr:list):
-  if not isinstance(arr , list) and all(isinstance(x,float) for x in arr):
-     raise TypeError("recv的数据组类型需要的输入为float类型的list!")
-    
-    #检查列表长度
-  if len(arr)!=self.num:
-       raise TypeError("recv的数据组list长度出错!")
-  
+ ##命令更新函数：cmd_update()
+ #torque_cmd:转矩命令,为6个关节期望力矩按顺序组成的数组[左轮；左膝；左髋；右轮；右膝；右髋]
+ def cmd_update(self,torque_cmd:list):
+  if not isinstance(torque_cmd , list) and all(isinstance(x,float) for x in torque_cmd):
+     raise TypeError("send的数据组类型需要的输入为float类型的list!")
+  #检查列表长度
+  if len(torque_cmd)!=self.num:
+       raise TypeError("send的数据组list长度出错!")
+  self.Left_Wheel_Torque_Des=torque_cmd[0]
+  self.Left_Knee_Torque_Des=torque_cmd[1]
+  self.Left_Hip_Torque_Des=torque_cmd[2]
+  self.Right_Wheel_Torque_Des=torque_cmd[3]
+  self.Left_Knee_Torque_Des=torque_cmd[4]
+  self.Left_Hip_Torque_Des=torque_cmd[5]
+ ##命令发送函数：cmd_send将转矩命令转化为约定的帧格式并发出
+ def cmd_send(self):
+  #帧格式：4+24+4
+  head_frame=b'11223344'
+  Left_Wheel_Torque_Des_b=struct.pack('f',self.Left_Wheel_Torque_Des)
+  Left_Knee_Torque_Des_b=struct.pack('f',self.Left_Knee_Torque_Des)
+  Left_Hip_Torque_Des_b=struct.pack('f',self.Left_Hip_Torque_Des)
+  Right_Wheel_Torque_Des_b=struct.pack('f',self.Left_Wheel_Torque_Des)
+  Right_Knee_Torque_Des_b=struct.pack('f',self.Left_Knee_Torque_Des)
+  Right_Hip_Torque_Des_b=struct.pack('f',self.Left_Hip_Torque_Des)
+  tail_frame=b'55667788'
+  cmd_byte=head_frame+Left_Wheel_Torque_Des_b+Left_Knee_Torque_Des_b+Left_Hip_Torque_Des_b\
+           +Right_Wheel_Torque_Des_b+Right_Knee_Torque_Des_b+Right_Hip_Torque_Des_b+tail_frame
+  return cmd_byte                  #    
 ###class 4:调用读取和发送的类###
-
 class SerialThread(thr.Thread):
   def __init__(self, 
               mode, 
               ser:serial.Serial,
               uart:UART_R=None,
-              send_state:WBR_State_Send=None,recv_state:WBR_State_Recv=None,
+              send_state:WBR_Cmd_Send=None,recv_state:WBR_State_Recv=None,
               send_queue:queue.Queue=None,recv_queue:queue.Queue=None, 
               send_lock:thr.Lock=None, recv_lock:thr.Lock=None):
     super().__init__()
@@ -210,7 +231,7 @@ class SerialThread(thr.Thread):
           self.receive_data()
 
   def send_data(self):
-      while True:
+        while True:
           # ��ȡҪ���͵�����
           message = input("������Ҫ���͵����ݣ�")  # �û�����Ҫ���͵�����
           self.send_queue.put(message)  # �����͵����ݷ������
@@ -231,22 +252,21 @@ class SerialThread(thr.Thread):
           frame_num=0                                      #已切片帧数
           lefted_bytes=b''                                 #不完整切片
           data_total=b''
-          
-          # 接受和解释数据类型
-          with self.recv_lock:                               #线程上锁，防止别的线程捣乱
-            if self.ser.in_waiting >0:                       #判断串口有无数据
-              data =lefted_bytes +self.ser.read(msg_length)  #get到数据
-              self.recv_queue.put(data)                      #存入队列
+          # 接受和解释数据类型                
+          if self.ser.in_waiting >0:                       #判断串口有无数据
+            data =lefted_bytes +self.ser.read(msg_length)  #get到数据
+            self.recv_queue.put(data)                      #存入队列
+            with self.recv_lock:                           #取数据时线程上锁，防止别的线程捣乱
               if not self.recv_queue.empty():
-                  data = self.recv_queue.get(4)               #从队列中取出，准备切片
+                  data = self.recv_queue.get(4)            #从队列中取出，准备切片
                   data_total,frame_num,lefted_bytes=self.uart.parce_multi_frame(data,len(data),
                   self.uart.single_frame_len,self.uart.head_frame_len,self.uart.tail_frame_len)  #切片多帧数据 
-              else:print("recv队列空,请检查")
+              else:print("recv队列空,请检查是否读入")
               #接受电机和IMU数据，调用回调函数进行外部计算(这里是先进行打印)                                              
               for i in range(frame_num):
                 self.recv_state.state_update(data_total[i],self.recv_state.state_show)
-            else:print("串口没有接受到数据")
-          time.sleep(0.005)
+          else:print("串口数据为空")
+          time.sleep(0.01)                                 #防止线程一直占用cpu
 
 if __name__=='__main__':
    '''''
